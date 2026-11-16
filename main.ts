@@ -7,25 +7,75 @@
 // container, MAKEFUN_INPUT_DIR and MAKEFUN_OUTPUT_DIR take the place
 // of /input and /output — the same two variables the kit's baseline
 // driver reads.
-import { readFileSync, writeFileSync } from 'node:fs';
+//
+// Nothing here is timed by the competition except through parse():
+// the driver is deliberately plain — read the whole case list once,
+// render every case on its own in the cases' order, write one JSON
+// array — so the measured speed is the renderer's, not the driver's.
+// Only Node builtins are used; there is no install step and no
+// dependency beyond parse.js and the vendored marked copy it reads.
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from './parse.js';
 
+// One case from cases.json: an id the harness uses to match outputs,
+// and the markdown to render.
 type CaseDoc = { id: string; markdown: string };
 
-// Read the case list, render every case on its own, and persist the
-// HTML strings as a JSON array in the cases' order.
-function main(): void {
-  const inDir = process.env.MAKEFUN_INPUT_DIR ?? '/input';
-  const outDir = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
-  const docs = JSON.parse(
-    readFileSync(join(inDir, 'cases.json'), 'utf8'),
-  ) as CaseDoc[];
-  const html: string[] = [];
-  for (const doc of docs) {
-    html.push(parse(doc.markdown));
+// The two directories the driver reads from and writes to. Inside
+// the harness container they are /input and /output; outside it the
+// MAKEFUN_* variables stand in, defaulting to the same paths so a
+// bare `node main.ts` behaves like the container run.
+function dirs(): { input: string; output: string } {
+  return {
+    input: process.env.MAKEFUN_INPUT_DIR ?? '/input',
+    output: process.env.MAKEFUN_OUTPUT_DIR ?? '/output',
+  };
+}
+
+// Read and parse the case list. The file is a JSON array of
+// {id, markdown} objects; the parse here is the driver's only
+// JSON.parse, and it happens once up front so no case's render time
+// includes it.
+function loadCases(dir: string): CaseDoc[] {
+  const raw = readFileSync(join(dir, 'cases.json'), 'utf8');
+  const docs = JSON.parse(raw) as CaseDoc[];
+  if (!Array.isArray(docs)) throw new Error('cases.json is not an array');
+  return docs;
+}
+
+// Render every case on its own through parse() and collect the HTML
+// strings in the cases' order. Each case is rendered alone — no
+// state is shared between calls, exactly as the harness scores it —
+// and the result array is indexed, not pushed, so the output order
+// can never drift from the input order.
+function renderCases(docs: CaseDoc[]): string[] {
+  const html: string[] = new Array<string>(docs.length);
+  for (let i = 0; i < docs.length; i += 1) {
+    html[i] = parse(docs[i].markdown);
   }
-  writeFileSync(join(outDir, 'html.json'), JSON.stringify(html));
+  return html;
+}
+
+// Persist the rendered HTML as one JSON array in the output dir.
+// The harness reads html.json and matches entries to cases by
+// position, so the array keeps the cases' order exactly. The output
+// directory is created if it does not exist yet, so a fresh mount
+// never fails the write.
+function writeHtml(dir: string, html: string[]): void {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'html.json'), JSON.stringify(html));
+}
+
+// The whole run, in order: resolve the directories, load the cases,
+// render them, write the output. No arguments are read and no other
+// I/O happens — the harness owns the directories, this file only
+// moves data through them.
+function main(): void {
+  const { input, output } = dirs();
+  const docs = loadCases(input);
+  const html = renderCases(docs);
+  writeHtml(output, html);
 }
 
 main();
