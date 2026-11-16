@@ -26,22 +26,20 @@ type CaseDoc = { id: string; markdown: string };
 // the harness container they are /input and /output; outside it the
 // MAKEFUN_* variables stand in, defaulting to the same paths so a
 // bare `node main.ts` behaves like the container run.
-function dirs(): { input: string; output: string } {
-  return {
-    input: process.env.MAKEFUN_INPUT_DIR ?? '/input',
-    output: process.env.MAKEFUN_OUTPUT_DIR ?? '/output',
-  };
-}
+const INPUT_DIR: string = process.env.MAKEFUN_INPUT_DIR ?? '/input';
+const OUTPUT_DIR: string = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 
 // Read and parse the case list. The file is a JSON array of
 // {id, markdown} objects; the parse here is the driver's only
 // JSON.parse, and it happens once up front so no case's render time
-// includes it.
-function loadCases(dir: string): CaseDoc[] {
-  const raw = readFileSync(join(dir, 'cases.json'), 'utf8');
-  const docs = JSON.parse(raw) as CaseDoc[];
+// includes it. A file that is not an array is a hard failure —
+// silently rendering nothing would score zero cases instead of
+// surfacing the broken input.
+function readCases(): CaseDoc[] {
+  const raw: string = readFileSync(join(INPUT_DIR, 'cases.json'), 'utf8');
+  const docs: unknown = JSON.parse(raw);
   if (!Array.isArray(docs)) throw new Error('cases.json is not an array');
-  return docs;
+  return docs as CaseDoc[];
 }
 
 // Render every case on its own through parse() and collect the HTML
@@ -49,7 +47,7 @@ function loadCases(dir: string): CaseDoc[] {
 // state is shared between calls, exactly as the harness scores it —
 // and the result array is indexed, not pushed, so the output order
 // can never drift from the input order.
-function renderCases(docs: CaseDoc[]): string[] {
+function renderAll(docs: CaseDoc[]): string[] {
   const html: string[] = new Array<string>(docs.length);
   for (let i = 0; i < docs.length; i += 1) {
     html[i] = parse(docs[i].markdown);
@@ -62,20 +60,19 @@ function renderCases(docs: CaseDoc[]): string[] {
 // position, so the array keeps the cases' order exactly. The output
 // directory is created if it does not exist yet, so a fresh mount
 // never fails the write.
-function writeHtml(dir: string, html: string[]): void {
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'html.json'), JSON.stringify(html));
+function saveHtml(html: string[]): void {
+  mkdirSync(OUTPUT_DIR, { recursive: true });
+  writeFileSync(join(OUTPUT_DIR, 'html.json'), JSON.stringify(html));
 }
 
-// The whole run, in order: resolve the directories, load the cases,
-// render them, write the output. No arguments are read and no other
-// I/O happens — the harness owns the directories, this file only
-// moves data through them.
-function main(): void {
-  const { input, output } = dirs();
-  const docs = loadCases(input);
-  const html = renderCases(docs);
-  writeHtml(output, html);
+// The whole run, in order: load the cases, render them, write the
+// output. No arguments are read and no other I/O happens — the
+// harness owns the directories, this file only moves data through
+// them.
+function run(): void {
+  const docs: CaseDoc[] = readCases();
+  const html: string[] = renderAll(docs);
+  saveHtml(html);
 }
 
-main();
+run();
